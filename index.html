@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>City Car Drive</title>
+  <style>
+    :root {
+      --sky: #87d4ff;
+      --grass: #66b85a;
+      --road: #2f3136;
+      --road-edge: #d9d9d9;
+      --lane: #f7f0a5;
+      --panel: rgba(15, 22, 28, 0.82);
+      --text: #f5f7fa;
+      --accent: #ff8c42;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top, rgba(255, 255, 255, 0.55), transparent 30%),
+        linear-gradient(180deg, #9be1ff 0%, #d4f1ff 35%, #7ec96f 35%, #4f9a43 100%);
+      overflow: hidden;
+    }
+
+    .game-shell {
+      position: relative;
+      width: min(92vw, 480px);
+    }
+
+    canvas {
+      width: 100%;
+      height: auto;
+      display: block;
+      border: 6px solid rgba(255, 255, 255, 0.75);
+      border-radius: 22px;
+      box-shadow: 0 28px 70px rgba(0, 0, 0, 0.28);
+      background: var(--sky);
+    }
+
+    .hud {
+      position: absolute;
+      inset: 16px 16px auto 16px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      pointer-events: none;
+    }
+
+    .panel {
+      background: var(--panel);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius: 14px;
+      backdrop-filter: blur(4px);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+    }
+
+    .panel strong {
+      display: block;
+      font-size: 0.8rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      opacity: 0.8;
+      margin-bottom: 4px;
+    }
+
+    .value {
+      font-size: 1.4rem;
+      font-weight: 700;
+    }
+
+    .instructions {
+      position: absolute;
+      left: 16px;
+      right: 16px;
+      bottom: 16px;
+      color: var(--text);
+      background: rgba(0, 0, 0, 0.42);
+      padding: 12px 14px;
+      border-radius: 14px;
+      font-size: 0.95rem;
+      line-height: 1.45;
+      text-align: center;
+    }
+
+    .mode-bar {
+      position: absolute;
+      top: 88px;
+      left: 16px;
+      right: 16px;
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .mode-button {
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 16px;
+      background: rgba(255, 255, 255, 0.78);
+      color: #17212b;
+      font: 700 0.9rem "Trebuchet MS", "Segoe UI", sans-serif;
+      cursor: pointer;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+      transition: transform 120ms ease, background 120ms ease, color 120ms ease;
+    }
+
+    .mode-button:hover {
+      transform: translateY(-1px);
+    }
+
+    .mode-button.active {
+      background: var(--accent);
+      color: white;
+    }
+
+    .instructions b {
+      color: #fff3bf;
+    }
+
+    @media (max-width: 520px) {
+      .instructions {
+        font-size: 0.85rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="game-shell">
+    <canvas id="game" width="480" height="760"></canvas>
+    <div class="hud">
+      <div class="panel">
+        <strong>Score</strong>
+        <div class="value" id="score">0</div>
+      </div>
+      <div class="panel">
+        <strong>Speed</strong>
+        <div class="value" id="speed">0</div>
+      </div>
+      <div class="panel" id="multiplier-panel" style="display: none; border: 2px solid var(--accent);">
+        <strong>Combo</strong>
+        <div class="value" id="multiplier">x1</div>
+      </div>
+    </div>
+    <div class="mode-bar">
+      <button class="mode-button active" data-mode="light">Some Cars</button>
+      <button class="mode-button" data-mode="medium">Normal</button>
+      <button class="mode-button" data-mode="heavy">More Traffic</button>
+    </div>
+    <div class="instructions" id="instructions">
+      Use <b>Arrow Keys</b> or <b>W A S D</b> to drive. Avoid traffic, stay on the road,
+      and press <b>R</b> if you crash.
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const scoreLabel = document.getElementById("score");
+    const speedLabel = document.getElementById("speed");
+    const multiplierLabel = document.getElementById("multiplier");
+    const multiplierPanel = document.getElementById("multiplier-panel");
+    const instructions = document.getElementById("instructions");
+    const modeButtons = [...document.querySelectorAll(".mode-button")];
+
+    const world = {
+      width: canvas.width,
+      height: canvas.height,
+      roadX: 95,
+      roadWidth: 290,
+      laneCount: 3,
+      scroll: 0,
+      distance: 0,
+      crashed: false,
+      multiplier: 1,
+      comboTime: 0,
+      baseRoadWidth: 290,
+      targetRoadWidth: 290
+    };
+
+    const car = {
+      x: canvas.width / 2,
+      y: canvas.height - 130,
+      width: 48,
+      height: 92,
+      speed: 0,
+      maxSpeed: 10,
+      acceleration: 0.24,
+      reverse: 0.12,
+      turnSpeed: 5.2
+    };
+
+    const keys = {
+      up: false,
+      down: false,
+      left: false,
+      right: false
+    };
+
+    const traffic = [];
+    let spawnTimer = 0;
+    let score = 0;
+    let lastTime = performance.now();
+    let trafficMode = "light";
+
+    const trafficModes = {
+      light: { label: "Some Cars", minDelay: 1200, maxDelay: 1800, tripleChance: 0.01, doubleChance: 0.08, baseSpeed: 1.15, speedRange: 0.55 },
+      medium: { label: "Normal", minDelay: 900, maxDelay: 1400, tripleChance: 0.04, doubleChance: 0.18, baseSpeed: 1.35, speedRange: 0.7 },
+      heavy: { label: "More Traffic", minDelay: 650, maxDelay: 1000, tripleChance: 0.1, doubleChance: 0.32, baseSpeed: 1.6, speedRange: 0.85 }
+    };
+
+    function resetGame() {
+      world.scroll = 0;
+      world.distance = 0;
+      world.crashed = false;
+      car.x = canvas.width / 2;
+      car.y = canvas.height - 130;
+      car.speed = 0;
+      traffic.length = 0;
+      spawnTimer = 0;
+      score = 0;
+      world.multiplier = 1;
+      world.comboTime = 0;
+      world.roadWidth = world.baseRoadWidth;
+      world.targetRoadWidth = world.baseRoadWidth;
+      multiplierPanel.style.display = "none";
+      instructions.textContent = `Use Arrow Keys or W A S D to drive. Mode: ${trafficModes[trafficMode].label}. Press R if you crash.`;
+    }
+
+    function setTrafficMode(mode) {
+      trafficMode = mode;
+      spawnTimer = 0;
+      traffic.length = 0;
+      modeButtons.forEach((button) => {
+        button.classList.toggle("active", button.dataset.mode === mode);
+      });
+      if (!world.crashed) {
+        instructions.textContent = `Use Arrow Keys or W A S D to drive. Mode: ${trafficModes[trafficMode].label}. Press R if you crash.`;
+      }
+    }
+
+    function laneCenter(index) {
+      const laneWidth = world.roadWidth / world.laneCount;
+      return world.roadX + laneWidth * index + laneWidth / 2;
+    }
+
+    function laneHasCloseTraffic(laneX, minGap) {
+      return traffic.some((enemy) => Math.abs(enemy.x - laneX) < 8 && enemy.y < minGap);
+    }
+
+    function randomVehicleType() {
+      const roll = Math.random();
+      if (roll < 0.2) {
+        return { width: 52, height: 108, kind: "truck" };
+      }
+      if (roll < 0.5) {
+        return { width: 42, height: 78, kind: "sport" };
+      }
+      return { width: 44, height: 86, kind: "sedan" };
+    }
+
+    function spawnTrafficRow() {
+      const mode = trafficModes[trafficMode];
+      const palette = [
+        ["#f94144", "#c1121f"],
+        ["#577590", "#355070"],
+        ["#f9c74f", "#f8961e"],
+        ["#43aa8b", "#1b7f69"],
+        ["#9b5de5", "#6a4c93"],
+        ["#f3722c", "#c44536"]
+      ];
+      const laneOrder = [0, 1, 2].sort(() => Math.random() - 0.5);
+      const densityRoll = Math.random();
+      const count = densityRoll < mode.tripleChance ? 3 : densityRoll < mode.tripleChance + mode.doubleChance ? 2 : 1;
+      let spawned = 0;
+
+      for (let i = 0; i < count; i++) {
+        const lane = laneOrder[i];
+        const x = laneCenter(lane);
+        if (laneHasCloseTraffic(x, 260)) {
+          continue;
+        }
+        const colors = palette[Math.floor(Math.random() * palette.length)];
+        const type = randomVehicleType();
+        traffic.push({
+          x,
+          y: -260 - i * 150,
+          width: type.width,
+          height: type.height,
+          speed: mode.baseSpeed + Math.random() * mode.speedRange + world.distance * 0.003,
+          colors,
+          kind: type.kind
+        });
+        spawned += 1;
+      }
+
+      return spawned > 0;
+    }
+
+    function update(dt) {
+      if (world.crashed) {
+        return;
+      }
+
+      if (keys.up) {
+        car.speed = Math.min(car.maxSpeed, car.speed + car.acceleration);
+      } else if (keys.down) {
+        car.speed = Math.max(-2.5, car.speed - car.reverse);
+      } else {
+        car.speed *= 0.985;
+      }
+
+      if (Math.abs(car.speed) < 0.05) {
+        car.speed = 0;
+      }
+
+      const turnScale = Math.max(0.55, Math.abs(car.speed) / car.maxSpeed);
+      if (keys.left) {
+        car.x -= car.turnSpeed * turnScale;
+      }
+      if (keys.right) {
+        car.x += car.turnSpeed * turnScale;
+      }
+
+      world.scroll += car.speed * 0.9;
+      world.distance += Math.max(0, car.speed) * dt * 0.06;
+      
+      // Speed Combo Multiplier Logic
+      const roadLeft = world.roadX + 18;
+      const roadRight = world.roadX + world.roadWidth - 18;
+      const onGrass = car.x - car.width / 2 < roadLeft || car.x + car.width / 2 > roadRight;
+
+      if (car.speed >= car.maxSpeed * 0.95 && !onGrass && keys.up) {
+        world.comboTime += dt;
+        if (world.comboTime > 2000) { // Every 2 seconds of max speed
+          world.multiplier = Math.min(5, Math.floor(world.comboTime / 2000) + 1);
+        }
+      } else {
+        world.comboTime = 0;
+        world.multiplier = 1;
+      }
+
+      if (world.multiplier > 1) {
+        multiplierPanel.style.display = "block";
+        multiplierLabel.textContent = `x${world.multiplier}`;
+        multiplierPanel.style.transform = `scale(${1 + (world.multiplier - 1) * 0.1})`;
+      } else {
+        multiplierPanel.style.display = "none";
+      }
+
+      score += Math.max(0, car.speed) * dt * 0.03 * world.multiplier;
+
+      // Environmental Narrowing Logic
+      world.targetRoadWidth = world.baseRoadWidth - Math.min(100, Math.floor(score / 1000) * 15);
+      if (world.roadWidth > world.targetRoadWidth) {
+        world.roadWidth -= 0.2;
+      }
+
+      spawnTimer -= dt;
+      if (spawnTimer <= 0) {
+        const mode = trafficModes[trafficMode];
+        const spawned = spawnTrafficRow();
+        spawnTimer = spawned
+          ? Math.max(mode.minDelay, mode.maxDelay - world.distance * 0.4)
+          : 260;
+      }
+
+      for (const enemy of traffic) {
+        enemy.y += enemy.speed + car.speed * 0.06;
+      }
+
+      while (traffic.length && traffic[0].y > canvas.height + 120) {
+        traffic.shift();
+      }
+
+      if (onGrass) {
+        car.speed *= 0.965;
+      }
+
+      for (const enemy of traffic) {
+        if (isColliding(car, enemy)) {
+          world.crashed = true;
+          car.speed = 0;
+          instructions.textContent = "Crash! Press R to restart and try another run through the city.";
+        }
+      }
+
+      scoreLabel.textContent = Math.floor(score);
+      speedLabel.textContent = `${Math.max(0, Math.round(car.speed * 16))} km/h`;
+    }
+
+    function isColliding(a, b) {
+      return (
+        Math.abs(a.x - b.x) < (a.width + b.width) * 0.42 &&
+        Math.abs(a.y - b.y) < (a.height + b.height) * 0.42
+      );
+    }
+
+    function drawBackground() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = "#9fe0ff";
+      ctx.fillRect(0, 0, canvas.width, 180);
+
+      for (let i = 0; i < 10; i++) {
+        const cloudX = (i * 90 + world.scroll * 0.08) % (canvas.width + 120) - 60;
+        ctx.fillStyle = "rgba(255,255,255,0.78)";
+        ctx.beginPath();
+        ctx.arc(cloudX, 70 + (i % 3) * 18, 22, 0, Math.PI * 2);
+        ctx.arc(cloudX + 18, 64 + (i % 3) * 18, 18, 0, Math.PI * 2);
+        ctx.arc(cloudX - 18, 65 + (i % 3) * 18, 16, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = "#6fbe5d";
+      ctx.fillRect(0, 180, canvas.width, canvas.height - 180);
+
+      drawBuildings(14, 0, 82, "#8d99ae", "#edf2f4");
+      drawBuildings(canvas.width - 96, 1, 86, "#b56576", "#ffd6ba");
+      drawRoad();
+    }
+
+    function drawBuildings(baseX, side, width, bodyColor, windowColor) {
+      for (let i = 0; i < 7; i++) {
+        const yShift = (world.scroll * 0.55 + i * 138) % (canvas.height + 160);
+        const y = 170 + yShift - 160;
+        const height = 90 + (i % 3) * 45;
+        const x = side === 0 ? baseX + (i % 2) * 12 : baseX - (i % 2) * 10;
+
+        ctx.fillStyle = bodyColor;
+        ctx.fillRect(x, y, width, height);
+
+        ctx.fillStyle = windowColor;
+        for (let row = 0; row < Math.floor(height / 24); row++) {
+          for (let col = 0; col < 3; col++) {
+            ctx.fillRect(x + 10 + col * 20, y + 10 + row * 20, 10, 12);
+          }
+        }
+
+        ctx.fillStyle = "#458745";
+        ctx.beginPath();
+        ctx.arc(side === 0 ? x + width + 10 : x - 10, y + height + 10, 14, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawRoad() {
+      const { roadX, roadWidth } = world;
+
+      ctx.fillStyle = "#5ea54f";
+      ctx.fillRect(0, 180, roadX, canvas.height - 180);
+      ctx.fillRect(roadX + roadWidth, 180, canvas.width - roadX - roadWidth, canvas.height - 180);
+
+      ctx.fillStyle = "#31343a";
+      ctx.fillRect(roadX, 180, roadWidth, canvas.height - 180);
+
+      ctx.fillStyle = "#cfd4da";
+      ctx.fillRect(roadX + 6, 180, 6, canvas.height - 180);
+      ctx.fillRect(roadX + roadWidth - 12, 180, 6, canvas.height - 180);
+
+      ctx.strokeStyle = "#f3e37c";
+      ctx.lineWidth = 5;
+      ctx.setLineDash([30, 24]);
+      for (let i = 1; i < world.laneCount; i++) {
+        const x = roadX + (roadWidth / world.laneCount) * i;
+        ctx.beginPath();
+        ctx.moveTo(x, 180 + (world.scroll % 54) - 54);
+        ctx.lineTo(x, canvas.height);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+
+      for (let i = 0; i < 18; i++) {
+        const y = 200 + ((i * 70 + world.scroll * 0.9) % (canvas.height + 80)) - 80;
+        ctx.fillStyle = i % 2 === 0 ? "#77c768" : "#6bbb5b";
+        ctx.fillRect(16, y, 48, 18);
+        ctx.fillRect(canvas.width - 64, y, 48, 18);
+      }
+    }
+
+    function drawCar(entity, colors) {
+      const x = entity.x;
+      const y = entity.y;
+
+      ctx.save();
+      ctx.translate(x, y);
+
+      ctx.fillStyle = "#101418";
+      ctx.fillRect(-entity.width / 2, -entity.height / 2, entity.width, entity.height);
+
+      ctx.fillStyle = colors[0];
+      const bodyInset = entity.kind === "truck" ? 4 : 5;
+      const roofHeight = entity.kind === "sport" ? 18 : 25;
+      ctx.fillRect(-entity.width / 2 + bodyInset, -entity.height / 2 + 10, entity.width - bodyInset * 2, entity.height - 20);
+
+      ctx.fillStyle = colors[1];
+      if (entity.kind === "truck") {
+        ctx.fillRect(-entity.width / 2 + 8, -entity.height / 2 + 16, entity.width - 16, 34);
+        ctx.fillRect(-entity.width / 2 + 8, -8, entity.width - 16, 34);
+      } else if (entity.kind === "sport") {
+        ctx.fillRect(-entity.width / 2 + 9, -entity.height / 2 + 28, entity.width - 18, roofHeight);
+        ctx.fillRect(-entity.width / 2 + 9, 8, entity.width - 18, 14);
+      } else {
+        ctx.fillRect(-entity.width / 2 + 10, -entity.height / 2 + 22, entity.width - 20, 25);
+        ctx.fillRect(-entity.width / 2 + 10, 6, entity.width - 20, 18);
+      }
+
+      ctx.fillStyle = "#d9f1ff";
+      ctx.fillRect(-entity.width / 2 + 12, -entity.height / 2 + 25, entity.width - 24, entity.kind === "truck" ? 20 : 16);
+
+      ctx.fillStyle = "#fff6bf";
+      ctx.fillRect(-entity.width / 2 + 6, -entity.height / 2 + 16, 8, 12);
+      ctx.fillRect(entity.width / 2 - 14, -entity.height / 2 + 16, 8, 12);
+
+      ctx.fillStyle = "#ff7b72";
+      ctx.fillRect(-entity.width / 2 + 8, entity.height / 2 - 20, 8, 10);
+      ctx.fillRect(entity.width / 2 - 16, entity.height / 2 - 20, 8, 10);
+
+      ctx.fillStyle = "#20262b";
+      ctx.fillRect(-entity.width / 2 - 4, -entity.height / 2 + 10, 6, 20);
+      ctx.fillRect(entity.width / 2 - 2, -entity.height / 2 + 10, 6, 20);
+      ctx.fillRect(-entity.width / 2 - 4, entity.height / 2 - 30, 6, 20);
+      ctx.fillRect(entity.width / 2 - 2, entity.height / 2 - 30, 6, 20);
+
+      ctx.restore();
+    }
+
+    function draw() {
+      drawBackground();
+
+      for (const enemy of traffic) {
+        drawCar(enemy, enemy.colors);
+      }
+
+      drawCar(car, ["#ff8c42", "#d95d39"]);
+
+      if (world.crashed) {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "700 36px Trebuchet MS";
+        ctx.textAlign = "center";
+        ctx.fillText("You Crashed", canvas.width / 2, canvas.height / 2 - 10);
+        ctx.font = "20px Trebuchet MS";
+        ctx.fillText("Press R to restart", canvas.width / 2, canvas.height / 2 + 28);
+      }
+    }
+
+    function gameLoop(now) {
+      const dt = Math.min(32, now - lastTime);
+      lastTime = now;
+      update(dt);
+      draw();
+      requestAnimationFrame(gameLoop);
+    }
+
+    function setKey(code, pressed) {
+      if (code === "ArrowUp" || code === "KeyW") keys.up = pressed;
+      if (code === "ArrowDown" || code === "KeyS") keys.down = pressed;
+      if (code === "ArrowLeft" || code === "KeyA") keys.left = pressed;
+      if (code === "ArrowRight" || code === "KeyD") keys.right = pressed;
+    }
+
+    window.addEventListener("keydown", (event) => {
+      if (event.code === "KeyR" && world.crashed) {
+        resetGame();
+      }
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "KeyW", "KeyA", "KeyS", "KeyD", "Space"].includes(event.code)) {
+        event.preventDefault();
+      }
+      setKey(event.code, true);
+    });
+
+    window.addEventListener("keyup", (event) => {
+      setKey(event.code, false);
+    });
+
+    modeButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        setTrafficMode(button.dataset.mode);
+      });
+    });
+
+    resetGame();
+    setTrafficMode("light");
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>
